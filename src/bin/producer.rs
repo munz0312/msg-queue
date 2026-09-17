@@ -1,10 +1,10 @@
-use msg_queue::{Message, read_message, write_message};
+use task_queue::{Message, read_message, write_message};
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     let mut stream = tokio::net::TcpStream::connect("127.0.0.1:8989").await?;
 
-    let job = Message::SubmitMessage {
+    let job = Message::SubmitTask {
         id: 1,
         payload: "hello worker".as_bytes().to_vec(),
     };

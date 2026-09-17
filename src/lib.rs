@@ -7,24 +7,25 @@ use tokio::net::TcpStream;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum Message {
-    SubmitMessage { id: u64, payload: Vec<u8> },
+    SubmitTask { id: u64, payload: Vec<u8> },
+    Task { id: u64, payload: Vec<u8> },
     Ack { request_id: u64 },
-    GetMessage {},
+    GetTask {},
 }
 
 #[derive(Clone)]
-pub struct MessageQueue {
-    inner: Arc<Mutex<MessageQueueInner>>,
+pub struct TaskQueue {
+    inner: Arc<Mutex<TaskQueueInner>>,
 }
 
-struct MessageQueueInner {
+struct TaskQueueInner {
     data: VecDeque<Message>,
 }
 
-impl MessageQueue {
+impl TaskQueue {
     pub fn new() -> Self {
         Self {
-            inner: Arc::new(Mutex::new(MessageQueueInner {
+            inner: Arc::new(Mutex::new(TaskQueueInner {
                 data: VecDeque::new(),
             })),
         }
@@ -41,7 +42,7 @@ impl MessageQueue {
     }
 }
 
-impl Default for MessageQueue {
+impl Default for TaskQueue {
     fn default() -> Self {
         Self::new()
     }
