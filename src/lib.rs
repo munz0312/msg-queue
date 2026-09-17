@@ -1,3 +1,6 @@
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
+
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -7,6 +10,41 @@ pub enum Message {
     SubmitMessage { id: u64, payload: Vec<u8> },
     Ack { request_id: u64 },
     GetMessage {},
+}
+
+#[derive(Clone)]
+pub struct MessageQueue {
+    inner: Arc<Mutex<MessageQueueInner>>,
+}
+
+struct MessageQueueInner {
+    data: VecDeque<Message>,
+}
+
+impl MessageQueue {
+    pub fn new() -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(MessageQueueInner {
+                data: VecDeque::new(),
+            })),
+        }
+    }
+
+    pub fn push(&self, message: Message) {
+        let mut lock = self.inner.lock().unwrap();
+        lock.data.push_front(message);
+    }
+
+    pub fn pop(&self) -> Option<Message> {
+        let mut lock = self.inner.lock().unwrap();
+        lock.data.pop_front()
+    }
+}
+
+impl Default for MessageQueue {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 pub async fn write_message(stream: &mut TcpStream, msg: &Message) -> std::io::Result<()> {

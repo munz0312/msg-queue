@@ -1,26 +1,16 @@
-use std::{
-    collections::VecDeque,
-    net::SocketAddr,
-    sync::{Arc, Mutex},
-};
+use std::net::SocketAddr;
 
 use msg_queue::{
     Message::{self, GetMessage, SubmitMessage},
-    read_message, write_message,
+    MessageQueue, read_message, write_message,
 };
 use tokio::net::TcpStream;
-
-struct MessageQueue {
-    buffer: VecDeque<Message>,
-}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:8989").await?;
 
-    let queue = Arc::new(Mutex::new(MessageQueue {
-        buffer: VecDeque::new(),
-    }));
+    let queue = MessageQueue::new();
     loop {
         let (mut socket, addr) = listener.accept().await?;
         let queue_clone = queue.clone();
@@ -31,29 +21,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-async fn handle_connection(
-    socket: &mut TcpStream,
-    addr: SocketAddr,
-    queue: Arc<Mutex<MessageQueue>>,
-) {
+async fn handle_connection(socket: &mut TcpStream, addr: SocketAddr, queue: MessageQueue) {
     match read_message(socket).await {
         Ok(SubmitMessage { id, payload }) => {
             println!("got message {id} ({} bytes) from {addr}", payload.len());
-            queue
-                .lock()
-                .expect("Couldn't acquire mutex")
-                .buffer
-                .push_front(SubmitMessage { id, payload });
+            queue.push(SubmitMessage { id, payload });
             let ack = Message::Ack { request_id: id };
             let _ = write_message(socket, &ack).await;
         }
 
         Ok(GetMessage {}) => {
-            let msg = queue
-                .lock()
-                .expect("Couldn't acquire mutex")
-                .buffer
-                .pop_front();
+            let msg = queue.pop();
             match msg {
                 Some(message) => {
                     let _ = write_message(socket, &message).await;
