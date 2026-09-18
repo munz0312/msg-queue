@@ -1,48 +1,104 @@
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+use tokio::sync::{mpsc, oneshot};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum Message {
     SubmitTask { id: u64, payload: Vec<u8> },
     Task { id: u64, payload: Vec<u8> },
     Ack { request_id: u64 },
-    GetTask {},
+    GetTask,
+    QueueEmpty,
 }
 
-#[derive(Clone)]
-pub struct TaskQueue {
-    inner: Arc<Mutex<TaskQueueInner>>,
+pub enum ActorMessage {
+    SubmitTask {
+        id: u64,
+        payload: Vec<u8>,
+    },
+    GetTask {
+        respond_to: oneshot::Sender<Message>,
+    },
 }
 
-struct TaskQueueInner {
+struct TaskQueueActor {
+    receiver: mpsc::Receiver<ActorMessage>,
     data: VecDeque<Message>,
 }
 
-impl TaskQueue {
-    pub fn new() -> Self {
+impl TaskQueueActor {
+    fn new(receiver: mpsc::Receiver<ActorMessage>) -> Self {
         Self {
-            inner: Arc::new(Mutex::new(TaskQueueInner {
-                data: VecDeque::new(),
-            })),
+            receiver,
+            data: VecDeque::new(),
         }
     }
 
-    pub fn push(&self, message: Message) {
-        let mut lock = self.inner.lock().unwrap();
-        lock.data.push_front(message);
+    fn push(&mut self, message: Message) {
+        self.data.push_front(message);
     }
 
-    pub fn pop(&self) -> Option<Message> {
-        let mut lock = self.inner.lock().unwrap();
-        lock.data.pop_front()
+    fn pop(&mut self) -> Option<Message> {
+        self.data.pop_back()
+    }
+
+    fn handle_message(&mut self, message: ActorMessage) {
+        match message {
+            ActorMessage::SubmitTask { id, payload } => {
+                self.push(Message::Task { id, payload });
+            }
+
+            ActorMessage::GetTask { respond_to } => {
+                if let Some(task) = self.pop() {
+                    let _ = respond_to.send(task);
+                } else {
+                    let _ = respond_to.send(Message::QueueEmpty);
+                }
+            } // _ => {
+              //     eprintln!("invalid message received")
+              // }
+        }
     }
 }
 
-impl Default for TaskQueue {
+async fn run_taskqueue_actor(mut actor: TaskQueueActor) {
+    while let Some(message) = actor.receiver.recv().await {
+        actor.handle_message(message);
+    }
+}
+
+#[derive(Clone)]
+pub struct TaskQueueHandler {
+    sender: mpsc::Sender<ActorMessage>,
+}
+
+impl TaskQueueHandler {
+    pub fn new() -> Self {
+        let (sender, receiver) = mpsc::channel(32);
+        let actor = TaskQueueActor::new(receiver);
+        tokio::spawn(run_taskqueue_actor(actor));
+
+        Self { sender }
+    }
+
+    pub async fn submit_task(&self, id: u64, payload: Vec<u8>) {
+        let msg = ActorMessage::SubmitTask { id, payload };
+        let _ = self.sender.send(msg).await;
+    }
+
+    pub async fn get_task(&self) -> Message {
+        let (send, recv) = oneshot::channel();
+        let msg = ActorMessage::GetTask { respond_to: send };
+
+        let _ = self.sender.send(msg).await;
+        recv.await.expect("Actor task has been killed")
+    }
+}
+
+impl Default for TaskQueueHandler {
     fn default() -> Self {
         Self::new()
     }

@@ -1,8 +1,8 @@
 use std::net::SocketAddr;
 
 use task_queue::{
-    Message::{self, GetTask, SubmitTask, Task},
-    TaskQueue, read_message, write_message,
+    Message::{self},
+    TaskQueueHandler, read_message, write_message,
 };
 use tokio::net::TcpStream;
 
@@ -10,7 +10,7 @@ use tokio::net::TcpStream;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:8989").await?;
 
-    let queue = TaskQueue::new();
+    let queue = TaskQueueHandler::new();
     loop {
         let (mut socket, addr) = listener.accept().await?;
         let queue_clone = queue.clone();
@@ -21,23 +21,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-async fn handle_connection(socket: &mut TcpStream, addr: SocketAddr, queue: TaskQueue) {
+async fn handle_connection(socket: &mut TcpStream, addr: SocketAddr, queue: TaskQueueHandler) {
     match read_message(socket).await {
-        Ok(SubmitTask { id, payload }) => {
+        Ok(Message::SubmitTask { id, payload }) => {
             println!("got message {id} ({} bytes) from {addr}", payload.len());
-            queue.push(Task { id, payload });
+            queue.submit_task(id, payload).await;
             let ack = Message::Ack { request_id: id };
             let _ = write_message(socket, &ack).await;
         }
 
-        Ok(GetTask {}) => {
-            let msg = queue.pop();
-            match msg {
-                Some(message) => {
-                    let _ = write_message(socket, &message).await;
-                }
-                None => println!("queue is empty"),
-            }
+        Ok(Message::GetTask) => {
+            let msg = queue.get_task().await;
+            let _ = write_message(socket, &msg).await;
         }
 
         Ok(_) => println!("invalid msg type"),
